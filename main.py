@@ -10,12 +10,13 @@ implementation.
 Usage:
     python3 main.py path-traversal -u http://example.com/view -p filename
     python3 main.py path-traversal -u http://example.com/view -p filename --os windows -o results.json
+    python3 main.py xss -u http://example.com/search -p q
 """
 
 import argparse
 
 from core.http_client import HTTPClient, parse_headers, parse_cookie_string, load_wordlist
-from modules import path_traversal
+from modules import path_traversal, xss
 
 
 def add_common_http_args(subparser):
@@ -52,9 +53,15 @@ def main():
     pt_parser.add_argument("--os", dest="target_os", default="linux", choices=["linux", "windows", "all"],
                             help="Target OS for success markers")
 
+    # --- xss module ---
+    xss_parser = subparsers.add_parser("xss", help="Scan a parameter for reflected XSS")
+    add_common_http_args(xss_parser)
+    xss_parser.add_argument("-p", "--param", required=True, help="Parameter name to test")
+    xss_parser.add_argument("-m", "--method", default="GET", choices=["GET", "POST"], help="HTTP method")
+    xss_parser.add_argument("-w", "--wordlist", help="Path to a custom payload wordlist file")
+
     # Future modules register here the same way, e.g.:
-    # xss_parser = subparsers.add_parser("xss", help="Scan a parameter for reflected/stored XSS")
-    # add_common_http_args(xss_parser)
+    # jwt_parser = subparsers.add_parser("jwt", help="Analyze a JWT for common weaknesses")
     # ...
 
     args = parser.parse_args()
@@ -68,6 +75,14 @@ def main():
                 raise SystemExit(1)
         args.payloads = payloads
         report = path_traversal.run(args, client)
+    elif args.module == "xss":
+        payloads = None
+        if args.wordlist:
+            payloads = load_wordlist(args.wordlist)
+            if payloads is None:
+                raise SystemExit(1)
+        args.payloads = payloads
+        report = xss.run(args, client)
     else:
         raise SystemExit(f"Unknown module: {args.module}")
 
