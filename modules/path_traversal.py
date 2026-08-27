@@ -62,3 +62,30 @@ def build_success_markers(target_os):
 
 def run(args, client: HTTPClient):
     payloads = args.payloads or build_payloads(args.target_os)
+    success_markers = build_success_markers(args.target_os)
+    report = Report("path_traversal")
+
+    print(f"[*] Scan start: {args.url} (Parameter: {args.param})")
+    print(f"[*] Payloads to try: {len(payloads)}\n")
+
+    for payload in payloads:
+        if args.method.upper() == "GET":
+            target_url = f"{args.url}?{args.param}={urllib.parse.quote(payload, safe='../%')}"
+            response = client.get(target_url)
+        else:
+            response = client.post(args.url, data={args.param: payload})
+
+        if response is None:
+            continue
+
+        for marker in success_markers:
+            if marker in response.text:
+                report.add_finding(
+                    payload=payload,
+                    marker=marker,
+                    url=response.url,
+                )
+                break
+
+    report.summarize()
+    return report
