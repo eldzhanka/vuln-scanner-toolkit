@@ -99,7 +99,7 @@ Each module implements a `run(args, client)` function and reports findings throu
 - [x] Path traversal module
 - [x] Burp Suite proxy support
 - [x] Polite-by-default request pacing and rate-limit backoff
-- [ ] XSS module
+- [x] XSS module
 - [ ] JWT analysis module (alg confusion, weak secrets, etc.)
 - [ ] IDOR checker module
 - [ ] API endpoint discovery module
