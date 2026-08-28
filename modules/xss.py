@@ -3,9 +3,13 @@ Reflected XSS scanner module.
 
 Sends a list of XSS payloads against a target parameter and checks
 whether the payload is reflected unescaped in the response — a strong
-signal of a reflected XSS vulnerability.
+signal of a reflected XSS vulnerability. Also reports the reflection
+context (HTML body, inside an attribute, inside a script block) and
+whether a Content-Security-Policy header is present, since both affect
+whether a finding is actually exploitable in a browser.
 """
 
+import re
 import urllib.parse
 import uuid
 
@@ -58,6 +62,34 @@ DEFAULT_PAYLOADS = [
 ]
 
 
+def detect_context(response_text, payload):
+    idx = response_text.find(payload)
+    if idx == -1:
+        return "unknown"
+
+    window_start = max(0, idx - 100)
+    before = response_text[window_start:idx]
+
+    # Inside a <script>...</script> block: look for the nearest
+    # unclosed <script> tag before the reflection point.
+    last_script_open = before.rfind("<script")
+    last_script_close = before.rfind("</script>")
+    if last_script_open != -1 and last_script_open > last_script_close:
+        return "inside <script> block"
+
+    # Inside an HTML attribute: reflection sits right after an
+    # unclosed quote that opened an attribute value, e.g. value="HERE.
+    if re.search(r'=["\']\s*$', before):
+        return "inside an HTML attribute value"
+
+    return "HTML body (plain text/tag content)"
+
+
+def detect_csp(response):
+    """Return the CSP header value if present, or None."""
+    return response.headers.get("Content-Security-Policy")
+
+
 def build_payloads(marker):
     """Attach a unique marker to each payload so a reflection can be
     tied back to the exact payload that caused it, even if the page
@@ -83,15 +115,18 @@ def run(args, client: HTTPClient):
         if response is None:
             continue
 
-        # Reflected unescaped means the exact payload string appears
-        # verbatim in the response body — if it were HTML-encoded,
-        # e.g. &lt;script&gt;, this exact match would fail, which is
-        # the point: we only want to flag genuinely unescaped reflection.
         if payload in response.text:
+            csp = detect_csp(response)
+            context = detect_context(response.text, payload)
+            note = "unescaped reflection in response body"
+            if csp:
+                note += " — CSP header present, may block execution in a browser"
             report.add_finding(
                 payload=payload,
                 url=response.url,
-                context="unescaped reflection in response body",
+                context=context,
+                note=note,
+                csp=csp or "none",
             )
 
     report.summarize()
