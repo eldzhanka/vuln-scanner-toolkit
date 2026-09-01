@@ -4,7 +4,7 @@ Modular web security scanning toolkit.
 Each vulnerability class lives in its own module under modules/, and
 shares a common HTTP client and reporting layer from core/. New checks
 (XSS, JWT, IDOR, endpoint discovery, etc.) plug in the same way path
-traversal does here — see modules/path_traversal.py as the reference
+traversal does here,see modules/path_traversal.py as the reference
 implementation.
 
 Usage:
@@ -12,12 +12,14 @@ Usage:
     python3 main.py path-traversal -u http://example.com/view -p filename --os windows -o results.json
     python3 main.py xss -u http://example.com/search -p q
     python3 main.py jwt -t eyJhbGciOi...
+    python3 main.py idor -u http://example.com/api/order -p id --id-range 1-50 -c "session=abc123"
+    python3 main.py discover -u http://example.com
 """
 
 import argparse
 
 from core.http_client import HTTPClient, parse_headers, parse_cookie_string, load_wordlist
-from modules import path_traversal, xss, jwt_analyzer
+from modules import path_traversal, xss, jwt_analyzer, idor, endpoint_discovery
 
 
 def add_common_http_args(subparser):
@@ -67,8 +69,75 @@ def main():
     jwt_parser.add_argument("-w", "--wordlist", help="Path to a custom secret wordlist file (for HMAC brute-force)")
     jwt_parser.add_argument("-o", "--output", help="Save results to a JSON file")
 
-    # Future modules register here the same way, e.g.:
-    # idor_parser = subparsers.add_parser("idor", help="Check for insecure direct object references")
+    # --- idor module ---
+    idor_parser = subparsers.add_parser("idor", help="Enumerate IDs to find insecure direct object references")
+    add_common_http_args(idor_parser)
+    idor_parser.add_argument("-p", "--param", required=True, help="Parameter name that holds the object ID")
+    idor_parser.add_argument("-m", "--method", default="GET", choices=["GET", "POST"], help="HTTP method")
+    idor_parser.add_argument("--id-range", required=True,
+                              help="ID range to try, e.g. '1-50' or a comma list '1,2,17,42'")
+    idor_parser.add_argument("--baseline-id",
+                              help="An ID you're known to have legitimate access to, for comparison")
+
+    # --- discover module (endpoint discovery) ---
+    disc_parser = subparsers.add_parser("discover", help="Brute-force common paths/endpoints against a base URL")
+    add_common_http_args(disc_parser)
+    disc_parser.add_argument("-w", "--wordlist", help="Path to a custom path wordlist file")
+    disc_parser.add_argument("--extensions", action="store_true",
+                              help="Also try each path with common backup/leftover extensions (.bak, .old, .swp, etc.)")
+
+    # Future modules register here the same way.
+
+    args = parser.parse_args()
+
+    if args.module == "path-traversal":
+        client = build_client(args)
+        payloads = None
+        if args.wordlist:
+            payloads = load_wordlist(args.wordlist)
+            if payloads is None:
+                raise SystemExit(1)
+        args.payloads = payloads
+        report = path_traversal.run(args, client)
+    elif args.module == "xss":
+        client = build_client(args)
+        payloads = None
+        if args.wordlist:
+            payloads = load_wordlist(args.wordlist)
+            if payloads is None:
+                raise SystemExit(1)
+        args.payloads = payloads
+        report = xss.run(args, client)
+    elif args.module == "jwt":
+        wordlist_entries = None
+        if args.wordlist:
+            wordlist_entries = load_wordlist(args.wordlist)
+            if wordlist_entries is None:
+                raise SystemExit(1)
+        args.wordlist_entries = wordlist_entries
+        report = jwt_analyzer.run(args)
+    elif args.module == "idor":
+        client = build_client(args)
+        args.id_list = idor.parse_id_range(args.id_range)
+        report = idor.run(args, client)
+    elif args.module == "discover":
+        client = build_client(args)
+        paths = None
+        if args.wordlist:
+            paths = load_wordlist(args.wordlist)
+            if paths is None:
+                raise SystemExit(1)
+        args.paths = paths
+        report = endpoint_discovery.run(args, client)
+    else:
+        raise SystemExit(f"Unknown module: {args.module}")
+
+    if args.output:
+        report.save(args.output)
+
+
+if __name__ == "__main__":
+    main()    # idor_parser = subparsers.add_parser("idor", help="Check for insecure direct object references")
     # ...
 
     args = parser.parse_args()
